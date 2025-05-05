@@ -141,8 +141,9 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item, co
         # Aggiorna l'ultimo prodotto (quello per cui si è fatto setup) e passa al prossimo
         # (anche se nel break uscirà subito dal ciclo).
         if minutes_available_for_production <= 0:
+             # Aggiorniamo l'ultimo prodotto tentato anche se non si produce nulla
              current_last_item = product_to_produce
-             break
+             break # Esce dal ciclo perché non c'è tempo per produrre
 
         # Recupera i dettagli (rate, costo, scarto) del prodotto specifico dalla config
         product_details = products_config[product_to_produce]
@@ -195,10 +196,11 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item, co
 
             # Aggiorna l'ultimo prodotto effettivamente lavorato
             current_last_item = product_to_produce
-        # else:
+        else:
             # Se actual_produced_quantity è 0 (non c'era tempo dopo il setup),
-            # non facciamo nulla qui, l'ultimo prodotto è già stato aggiornato
-            # prima del break nel caso minutes_available_for_production <= 0
+            # Aggiorna comunque l'ultimo prodotto tentato
+             current_last_item = product_to_produce
+
 
         # Se abbiamo usato tutto il tempo disponibile (o più, per via degli arrotondamenti),
         # interrompiamo la produzione per oggi.
@@ -264,11 +266,18 @@ if __name__ == "__main__":
     if not report_giorno_2:
         print("Nessuna produzione registrata per il Giorno 2.")
     else:
-        headers = report_giorno_2[0].keys()
-        print(" | ".join(f"{h:<12}" for h in headers))
-        print("-" * (len(headers) * 15))
-        for report_item in report_giorno_2:
-            print(" | ".join(f"{str(v):<12}" for v in report_item.values()))
+        # Controlla se la lista non è vuota prima di accedere al primo elemento per le chiavi
+        if report_giorno_2:
+            headers = report_giorno_2[0].keys()
+            print(" | ".join(f"{h:<12}" for h in headers))
+            print("-" * (len(headers) * 15))
+            for report_item in report_giorno_2:
+                print(" | ".join(f"{str(v):<12}" for v in report_item.values()))
+        else:
+             # Questo caso non dovrebbe verificarsi se sopra abbiamo già controllato
+             # ma lo teniamo per robustezza
+             pass # Già gestito dal controllo 'if not report_giorno_2'
+
 
     print(f"\nUltimo prodotto lavorato/tentato nel Giorno 2: {ultimo_prodotto_g2}")
 
