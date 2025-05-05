@@ -17,7 +17,7 @@ config = {
     "setup_cost": 15.0,              # Costo fisso per ogni setup (€)
     "cost_per_minute_running": 0.10, # Costo operativo macchina (€/minuto)
     "demand_range": (50, 150),       # Range (min, max) per la domanda giornaliera casuale
-    "simulation_days": 30,           # Numero di giorni da simulare
+    "simulation_days": 5,            # Numero di giorni da simulare (Impostato a 5 per test)
     "products": {
         # Caratteristiche specifiche per ciascun prodotto
         "IS": { # Ingranaggio Standard
@@ -71,6 +71,8 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item, co
     """
     Simula le operazioni di produzione per una singola giornata.
     Versione 1: senza gestione del rollover della produzione non completata.
+    L'output principale richiesto dalla traccia è il tempo di produzione complessivo,
+    che corrisponde ai minuti usati totali nella giornata per setup e produzione.
 
     Args:
         day_index (int): Il numero progressivo del giorno simulato (es. 1, 2, ...).
@@ -87,6 +89,8 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item, co
                                               Ogni dizionario contiene le metriche di produzione.
             - final_last_produced_item (str | None): L'ultimo prodotto effettivamente
                                                      lavorato o tentato in questo giorno.
+            - total_time_spent_today (float): Il tempo totale (in minuti) speso oggi
+                                               tra setup e produzione effettiva.
     """
     # Estrae i parametri generali necessari dalla configurazione
     total_available_minutes = config_params["daily_minutes"]
@@ -105,181 +109,196 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item, co
     # Itera sui prodotti secondo l'ordine definito in config["production_order"]
     for product_to_produce in production_order:
         # Ottiene la quantità richiesta per questo prodotto dalla domanda giornaliera
-        # .get() è usato per sicurezza: se il prodotto non fosse nella domanda, ritorna 0
         requested_quantity = demand_of_the_day.get(product_to_produce, 0)
 
         # Se non c'è domanda per questo prodotto, passa al successivo
         if requested_quantity <= 0:
-            continue
+            # Aggiorna comunque l'ultimo item se questo era quello previsto
+            # (utile se l'ultimo del giorno prima era A, e oggi A ha domanda 0,
+            # il primo setup per B deve comunque considerare A come ultimo)
+            # Ma solo se non abbiamo ancora iniziato a lavorare oggi (minutes_used == 0)
+            # o se l'ultimo item lavorato era diverso. Questo evita di "saltare"
+            # un prodotto senza aggiornare current_last_item se era già quello.
+            # In realtà, la logica sotto gestisce già questo implicitamente,
+            # quindi potremmo anche rimuovere questo 'if'. Per ora lo lascio per chiarezza.
+            # if minutes_used == 0 or (current_last_item is not None and current_last_item != product_to_produce):
+            #      pass # Non serve aggiornare qui, lo farà dopo il setup o la produzione
+            continue # Passa al prossimo prodotto
 
         # --- Gestione del Tempo e Costo di Setup ---
         current_setup_time = 0.0
         current_setup_cost = 0.0
-        # Il setup è necessario SOLO se:
-        # 1. Non è il primo prodotto lavorato in assoluto (current_last_item non è None)
-        # 2. Il prodotto da lavorare ora è DIVERSO dall'ultimo lavorato
+        needs_setup = False
         if current_last_item is not None and current_last_item != product_to_produce:
-            current_setup_time = float(setup_time) # Convertiamo in float
-            current_setup_cost = float(setup_cost)   # Convertiamo in float
+            needs_setup = True
+            current_setup_time = float(setup_time)
+            current_setup_cost = float(setup_cost)
 
         # Controlla se c'è abbastanza tempo rimasto nella giornata almeno per fare il setup
         if minutes_used + current_setup_time > total_available_minutes:
-            # Se non c'è tempo neanche per il setup, la produzione per oggi termina qui.
-            # Non si processeranno altri prodotti.
-            break # Esce dal ciclo 'for product_to_produce...'
+            break # Esce dal ciclo for dei prodotti
 
         # Se c'è tempo, scala i minuti usati per il setup
         minutes_used += current_setup_time
-        # Inizia ad accumulare il costo per questo lotto (partendo dal costo di setup)
         total_cost_for_this_batch = current_setup_cost
 
         # --- Gestione della Produzione Effettiva ---
-        # Calcola quanti minuti rimangono per produrre pezzi
         minutes_available_for_production = total_available_minutes - minutes_used
 
-        # Se non sono rimasti minuti dopo il setup, non si può produrre.
-        # Aggiorna l'ultimo prodotto (quello per cui si è fatto setup) e passa al prossimo
-        # (anche se nel break uscirà subito dal ciclo).
         if minutes_available_for_production <= 0:
-             # Aggiorniamo l'ultimo prodotto tentato anche se non si produce nulla
-             current_last_item = product_to_produce
+             current_last_item = product_to_produce # Aggiorna l'ultimo prodotto tentato
+             # Aggiungiamo un report per il solo setup, se è stato fatto
+             if needs_setup: # Solo se abbiamo effettivamente speso tempo/costo per il setup
+                 daily_production_report.append({
+                    "day": day_index, "product": product_to_produce,
+                    "requested_qty": requested_quantity, "produced_qty": 0,
+                    "scrap_qty": 0, "good_qty": 0,
+                    "time_spent_producing_min": 0.0,
+                    "setup_spent_min": round(current_setup_time, 2),
+                    "total_cost_eur": round(total_cost_for_this_batch, 2)
+                 })
              break # Esce dal ciclo perché non c'è tempo per produrre
 
-        # Recupera i dettagli (rate, costo, scarto) del prodotto specifico dalla config
+        # Recupera i dettagli del prodotto
         product_details = products_config[product_to_produce]
-        rate = product_details["rate_per_minute"] # Pezzi/minuto
-        cost_piece = product_details["cost_per_piece"] # €/pezzo
-        scrap_percent = product_details["scrap_rate_percent"] / 100.0 # Es: 3.0 -> 0.03
+        rate = product_details["rate_per_minute"]
+        cost_piece = product_details["cost_per_piece"]
+        scrap_percent = product_details["scrap_rate_percent"] / 100.0
 
-        # Calcola quanti pezzi si potrebbero teoricamente produrre nel tempo rimasto
-        # Arrotondiamo per difetto perché non si possono fare pezzi incompleti
+        # Calcola quanti pezzi si possono produrre nel tempo rimanente
         max_producible_in_time = math.floor(minutes_available_for_production * rate)
-
-        # La quantità effettivamente prodotta è il minimo tra quella richiesta
-        # e quella massima producibile nel tempo rimasto
         actual_produced_quantity = min(requested_quantity, max_producible_in_time)
 
-        # Se si produce effettivamente qualcosa (quantità > 0)
+        # Se si produce effettivamente qualcosa
         if actual_produced_quantity > 0:
-            # Calcola il tempo esatto impiegato per produrre questa quantità
-            # Tempo = Quantità / Tasso (es. 10 pezzi / 0.5 pezzi/min = 20 min)
             time_spent_producing = actual_produced_quantity / rate
-
-            # Aggiorna i minuti totali usati nella giornata
             minutes_used += time_spent_producing
 
-            # Calcola i costi di produzione aggiuntivi
             cost_material = actual_produced_quantity * cost_piece
             cost_machine_running = time_spent_producing * cost_per_minute
-            # Aggiunge questi costi al costo totale del lotto (che già includeva il setup)
             total_cost_for_this_batch += (cost_material + cost_machine_running)
 
-            # Calcola la quantità di scarti (arrotondando per difetto)
             scrap_quantity = math.floor(actual_produced_quantity * scrap_percent)
-            # Calcola la quantità di pezzi buoni
             good_quantity = actual_produced_quantity - scrap_quantity
 
-            # Crea un dizionario con i risultati per questo lotto specifico
             batch_report = {
-                "day": day_index,
-                "product": product_to_produce,
+                "day": day_index, "product": product_to_produce,
                 "requested_qty": requested_quantity,
                 "produced_qty": actual_produced_quantity,
-                "scrap_qty": scrap_quantity,
-                "good_qty": good_quantity,
+                "scrap_qty": scrap_quantity, "good_qty": good_quantity,
                 "time_spent_producing_min": round(time_spent_producing, 2),
-                "setup_spent_min": round(current_setup_time, 2), # Arrotonda anche il setup time
-                "total_cost_eur": round(total_cost_for_this_batch, 2) # Arrotonda il costo finale
+                "setup_spent_min": round(current_setup_time, 2),
+                "total_cost_eur": round(total_cost_for_this_batch, 2)
             }
-            # Aggiunge il report del lotto alla lista dei report giornalieri
             daily_production_report.append(batch_report)
-
-            # Aggiorna l'ultimo prodotto effettivamente lavorato
-            current_last_item = product_to_produce
+            current_last_item = product_to_produce # Aggiorna l'ultimo prodotto lavorato
         else:
-            # Se actual_produced_quantity è 0 (non c'era tempo dopo il setup),
-            # Aggiorna comunque l'ultimo prodotto tentato
+             # Se non si è prodotto nulla (es. tempo finito dopo setup),
+             # aggiorna comunque l'ultimo prodotto tentato
              current_last_item = product_to_produce
+             # Aggiungiamo un report per il solo setup, se è stato fatto
+             if needs_setup:
+                 daily_production_report.append({
+                    "day": day_index, "product": product_to_produce,
+                    "requested_qty": requested_quantity, "produced_qty": 0,
+                    "scrap_qty": 0, "good_qty": 0,
+                    "time_spent_producing_min": 0.0,
+                    "setup_spent_min": round(current_setup_time, 2),
+                    "total_cost_eur": round(total_cost_for_this_batch, 2)
+                 })
+
+        # Se il tempo è esaurito, interrompi per oggi
+        if minutes_used >= total_available_minutes - 0.01: # Tolleranza float
+            break
+
+    # Calcola il tempo totale speso oggi
+    total_time_spent_today = minutes_used
+
+    # Restituisce il report giornaliero, l'ultimo prodotto e il tempo totale
+    return daily_production_report, current_last_item, total_time_spent_today
+
+# Task 3.4: Implementazione run_simulation
+def run_simulation(config_params):
+    """
+    Esegue la simulazione per il numero di giorni specificato nella configurazione.
+
+    Args:
+        config_params (dict): Il dizionario di configurazione globale.
+
+    Returns:
+        list: Una lista contenente tutti i dizionari di report dei lotti
+              prodotti durante l'intera simulazione.
+    """
+    # Estrae il numero di giorni da simulare dalla configurazione
+    num_days = config_params["simulation_days"]
+    # Lista per accumulare tutti i report di tutti i giorni
+    simulation_log = []
+    # Stato iniziale: nessun prodotto lavorato il giorno prima
+    last_produced = None
+
+    print(f"\n--- Avvio Simulazione per {num_days} giorni ---")
+
+    # Ciclo principale della simulazione per ogni giorno
+    for day in range(1, num_days + 1):
+        # 1. Genera la domanda per il giorno corrente
+        current_demand = generate_daily_demand(config_params)
+
+        # 2. Simula la giornata produttiva
+        daily_report, last_produced, time_today = simulate_production_day(
+            day_index=day,
+            demand_of_the_day=current_demand,
+            last_produced_item=last_produced, # Passa l'ultimo prodotto del giorno precedente
+            config_params=config_params
+        )
+
+        # 3. Aggiunge i risultati della giornata al log complessivo
+        # Usiamo extend per aggiungere tutti gli elementi della lista daily_report
+        # alla lista simulation_log
+        simulation_log.extend(daily_report)
+
+        # Stampa un riepilogo giornaliero (opzionale, per debug)
+        print(f"Giorno {day}: Domanda={current_demand}, Tempo Speso={round(time_today, 1)} min, Ultimo Prod={last_produced}")
+        # Se vuoi vedere i dettagli di ogni giorno durante la simulazione, decommenta le righe sotto
+        # print(f"  Report Giorno {day}:")
+        # if daily_report:
+        #     headers = daily_report[0].keys()
+        #     print("  " + " | ".join(f"{h:<12}" for h in headers))
+        #     print("  " + "-" * (len(headers) * 15))
+        #     for item in daily_report:
+        #         print("  " + " | ".join(f"{str(v):<12}" for v in item.values()))
+        # else:
+        #     print("  Nessuna produzione.")
 
 
-        # Se abbiamo usato tutto il tempo disponibile (o più, per via degli arrotondamenti),
-        # interrompiamo la produzione per oggi.
-        if minutes_used >= total_available_minutes:
-            break # Esce dal ciclo 'for product_to_produce...'
-
-    # Alla fine del ciclo (o se interrotto da un break),
-    # restituisce la lista dei report dei lotti prodotti e l'ultimo prodotto toccato.
-    return daily_production_report, current_last_item
+    print(f"--- Simulazione Completata ---")
+    # Restituisce il log completo della simulazione
+    return simulation_log
 
 
-# --- Blocco di Esecuzione Principale (Aggiornato per testare entrambe le funzioni) ---
+# --- Blocco di Esecuzione Principale (Aggiornato per testare run_simulation) ---
 if __name__ == "__main__":
-    print("--- Inizio Test Script Simulatore (Fase 3.3) ---")
+    print("--- Inizio Esecuzione Script Simulatore (Fase 3.4) ---")
 
-    # 1. Genera la domanda per il Giorno 1
-    print("\n--- Generazione Domanda Giorno 1 ---")
-    domanda_giorno_1 = generate_daily_demand(config)
-    print(f"Domanda Giorno 1: {domanda_giorno_1}")
+    # Task 3.5: Test con run_simulation per 5 giorni
+    # Modifica temporaneamente simulation_days nella config per il test
+    config["simulation_days"] = 5
+    print(f"\nEsecuzione simulazione per {config['simulation_days']} giorni...")
 
-    # 2. Simula la produzione del Giorno 1
-    print("\n--- Simulazione Produzione Giorno 1 ---")
-    # Il primo giorno, non c'è un "ultimo prodotto" dal giorno precedente (None)
-    report_giorno_1, ultimo_prodotto_g1 = simulate_production_day(
-        day_index=1,
-        demand_of_the_day=domanda_giorno_1,
-        last_produced_item=None, # Nessun prodotto precedente il primo giorno
-        config_params=config
-    )
+    # Esegui l'intera simulazione
+    final_results = run_simulation(config)
 
-    # 3. Stampa il report del Giorno 1
-    print(f"\n--- Report Dettagliato Giorno 1 ---")
-    if not report_giorno_1:
-        print("Nessuna produzione registrata per il Giorno 1.")
+    # Task 3.6: Stampa l'output completo per verifica
+    print(f"\n--- Report Completo Simulazione ({config['simulation_days']} giorni) ---")
+    if not final_results:
+        print("Nessun risultato prodotto dalla simulazione.")
     else:
-        # Stampa intestazioni dinamiche basate sulle chiavi del primo dizionario
-        headers = report_giorno_1[0].keys()
-        print(" | ".join(f"{h:<12}" for h in headers)) # Allinea le intestazioni
-        print("-" * (len(headers) * 15)) # Linea separatrice
-        # Stampa i dati per ogni lotto prodotto nel giorno
-        for report_item in report_giorno_1:
-             # Allinea i valori sotto le rispettive intestazioni
-            print(" | ".join(f"{str(v):<12}" for v in report_item.values()))
+        # Stampa intestazioni basate sul primo record
+        headers = final_results[0].keys()
+        print(" | ".join(f"{h:<12}" for h in headers))
+        print("-" * (len(headers) * 15))
+        # Stampa tutti i record accumulati
+        for record in final_results:
+            print(" | ".join(f"{str(v):<12}" for v in record.values()))
 
-    print(f"\nUltimo prodotto lavorato/tentato nel Giorno 1: {ultimo_prodotto_g1}")
-
-    # 4. Genera la domanda per il Giorno 2
-    print("\n--- Generazione Domanda Giorno 2 ---")
-    domanda_giorno_2 = generate_daily_demand(config)
-    print(f"Domanda Giorno 2: {domanda_giorno_2}")
-
-    # 5. Simula la produzione del Giorno 2, passando l'ultimo prodotto del Giorno 1
-    print("\n--- Simulazione Produzione Giorno 2 ---")
-    report_giorno_2, ultimo_prodotto_g2 = simulate_production_day(
-        day_index=2,
-        demand_of_the_day=domanda_giorno_2,
-        last_produced_item=ultimo_prodotto_g1, # Passa l'ultimo prodotto del giorno prima!
-        config_params=config
-    )
-
-    # 6. Stampa il report del Giorno 2
-    print(f"\n--- Report Dettagliato Giorno 2 ---")
-    if not report_giorno_2:
-        print("Nessuna produzione registrata per il Giorno 2.")
-    else:
-        # Controlla se la lista non è vuota prima di accedere al primo elemento per le chiavi
-        if report_giorno_2:
-            headers = report_giorno_2[0].keys()
-            print(" | ".join(f"{h:<12}" for h in headers))
-            print("-" * (len(headers) * 15))
-            for report_item in report_giorno_2:
-                print(" | ".join(f"{str(v):<12}" for v in report_item.values()))
-        else:
-             # Questo caso non dovrebbe verificarsi se sopra abbiamo già controllato
-             # ma lo teniamo per robustezza
-             pass # Già gestito dal controllo 'if not report_giorno_2'
-
-
-    print(f"\nUltimo prodotto lavorato/tentato nel Giorno 2: {ultimo_prodotto_g2}")
-
-    print("\n--- Fine Test Script Simulatore (Fase 3.3) ---")
+    print(f"\n--- Fine Esecuzione Script Simulatore (Fase 3.4) ---")
 
