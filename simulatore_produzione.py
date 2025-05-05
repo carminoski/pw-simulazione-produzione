@@ -5,7 +5,7 @@ Project Work - Traccia 5
 Autore: Carmine Russo
 Matricola: 0312301777
 
-Versione 2: Implementazione logica di Rollover (con correzione NameError)
+Versione 2: Implementazione logica di Rollover
 """
 
 import random
@@ -47,12 +47,24 @@ config = {
 # Funzione per generare la domanda giornaliera (invariata rispetto a v1)
 def generate_daily_demand(config_params):
     """Genera domanda giornaliera casuale."""
+    # Dizionario per contenere la domanda del giorno
     daily_demand = {}
+    # Estrae la lista dei nomi dei prodotti (es. ['IS', 'IR', 'IAP'])
+    # dal dizionario di configurazione
     product_names = list(config_params["products"].keys())
+    # Estrae la tupla (min, max) del range di domanda dalla configurazione
     min_demand, max_demand = config_params["demand_range"]
+
+    # Itera (scorre) su ciascun nome di prodotto nella lista
     for product_name in product_names:
+        # Per ogni prodotto, genera un numero intero casuale
+        # compreso tra min_demand e max_demand (estremi inclusi)
         demand_qty = random.randint(min_demand, max_demand)
+        # Aggiunge il prodotto e la sua domanda generata al dizionario daily_demand
+        # Esempio: daily_demand['IS'] = 135
         daily_demand[product_name] = demand_qty
+
+    # Restituisce il dizionario completo contenente la domanda per tutti i prodotti
     return daily_demand
 
 # Funzione per simulare la giornata produttiva (MODIFICATA per Rollover)
@@ -126,8 +138,8 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item,
         if minutes_used + current_setup_time > total_available_minutes:
             # Non c'è tempo neanche per il setup, la produzione di oggi termina.
             # Le quantità richieste (rollover + new demand) rimangono nel residuo.
-            # Non serve aggiornare new_remaining_production qui, perché
-            # il valore iniziale (rollover_quantity) non è stato modificato.
+            # Aggiorna il dizionario new_remaining_production con il totale da fare
+            new_remaining_production[product_to_produce] = total_quantity_to_produce
             break # Esce dal ciclo prodotti
 
         minutes_used += current_setup_time
@@ -169,7 +181,7 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item,
                 batch_report = {
                     "day": day_index,
                     "product": product_to_produce,
-                    # Nota: 'requested_qty' ora rappresenta il totale da fare oggi (rollover + new)
+                    # Nota: 'requested_qty_today' ora rappresenta il totale da fare oggi (rollover + new)
                     "requested_qty_today": total_quantity_to_produce,
                     "produced_qty": actual_produced_quantity,
                     "scrap_qty": scrap_quantity, "good_qty": good_quantity,
@@ -183,7 +195,7 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item,
         # Sottrae quanto prodotto oggi dal totale che doveva essere prodotto
         remaining_for_this_product = total_quantity_to_produce - actual_produced_quantity
         if remaining_for_this_product > 0:
-            # Se c'è un residuo, lo salva nel dizionario per domani
+            # Se c'è un residuo, lo salva/aggiorna nel dizionario per domani
             new_remaining_production[product_to_produce] = remaining_for_this_product
         elif product_to_produce in new_remaining_production:
             # Se abbiamo completato la produzione (residuo <= 0)
@@ -195,7 +207,7 @@ def simulate_production_day(day_index, demand_of_the_day, last_produced_item,
         current_last_item = product_to_produce
 
         # Se il tempo è esaurito, interrompi
-        if minutes_used >= total_available_minutes - 0.01:
+        if minutes_used >= total_available_minutes - 0.01: # Tolleranza float
             break
 
     # Calcola tempo totale speso
@@ -228,7 +240,7 @@ def run_simulation(config_params):
         # 1. Genera la NUOVA domanda per oggi
         current_demand = generate_daily_demand(config_params)
 
-        # **CORREZIONE ERRORE:** Salva lo stato del residuo *prima* della simulazione del giorno
+        # Salva lo stato del residuo *prima* della simulazione del giorno per la stampa
         residuo_iniziale_giorno_corrente = remaining_production.copy()
 
         # 2. Simula la giornata, passando il RESIDUO di ieri
@@ -249,7 +261,6 @@ def run_simulation(config_params):
         remaining_production = new_remaining # Salva il nuovo residuo per domani
 
         # Stampa riepilogo giornaliero (mostra anche il residuo per domani)
-        # **CORREZIONE ERRORE:** Usa la variabile salvata per stampare il residuo iniziale
         print(f"Giorno {day}: Nuova Domanda={current_demand}, "
               f"Residuo Iniziale={residuo_iniziale_giorno_corrente}, " # Usa la variabile salvata
               f"Tempo Speso={round(time_today, 1)} min, "
@@ -261,7 +272,7 @@ def run_simulation(config_params):
 
 # --- Blocco di Esecuzione Principale (Aggiornato per testare v2 con Rollover) ---
 if __name__ == "__main__":
-    print("--- Inizio Esecuzione Script Simulatore (Fase 4.1 - Rollover Corretto) ---")
+    print("--- Inizio Esecuzione Script Simulatore (Fase 4.1 - Rollover) ---")
 
     # Task 4.3: Test con run_simulation per 5 giorni
     config["simulation_days"] = 5 # Manteniamo 5 giorni per test
@@ -277,6 +288,9 @@ if __name__ == "__main__":
         # Stampa intestazioni (assumendo che il primo record esista e abbia le chiavi)
         # Gestisce il caso in cui il primo report sia vuoto (improbabile ma possibile)
         if final_results_v2:
+            # Trova tutte le possibili chiavi da tutti i record (più robusto)
+            # headers = set().union(*(d.keys() for d in final_results_v2))
+            # Oppure assume che il primo record le abbia tutte:
             headers = final_results_v2[0].keys()
             # Modificato nome colonna per chiarezza
             headers_display = [h.replace('requested_qty_today', 'req_tot_day') for h in headers]
@@ -284,10 +298,11 @@ if __name__ == "__main__":
             print("-" * (len(headers_display) * 15)) # Usa headers_display per la lunghezza
             # Stampa tutti i record accumulati
             for record in final_results_v2:
-                print(" | ".join(f"{str(v):<12}" for v in record.values()))
+                # Assicura che tutti i valori siano stringhe e allineati
+                print(" | ".join(f"{str(record.get(h, 'N/A')):<12}" for h in headers))
         else:
              print("La simulazione non ha prodotto report dettagliati.")
 
 
-    print(f"\n--- Fine Esecuzione Script Simulatore (Fase 4.1 Corretto) ---")
+    print(f"\n--- Fine Esecuzione Script Simulatore (Fase 4.1) ---")
 
