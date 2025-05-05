@@ -5,7 +5,7 @@ Project Work - Traccia 5
 Autore: Carmine Russo
 Matricola: 0312301777
 
-Versione 2: Implementazione logica di Rollover
+Versione 2: Implementazione logica di Rollover (con correzione NameError)
 """
 
 import random
@@ -299,6 +299,8 @@ if __name__ == "__main__":
             # Stampa tutti i record accumulati
             for record in final_results_v2:
                 # Assicura che tutti i valori siano stringhe e allineati
+                # Usiamo .get(h, 'N/A') per gestire casi in cui una chiave potrebbe mancare
+                # (anche se non dovrebbe succedere con la logica attuale)
                 print(" | ".join(f"{str(record.get(h, 'N/A')):<12}" for h in headers))
         else:
              print("La simulazione non ha prodotto report dettagliati.")
