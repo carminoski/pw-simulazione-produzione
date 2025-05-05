@@ -38,7 +38,7 @@ Tutto sta nel file `simulatore_produzione.py`. Ho cercato di organizzarlo in fun
 
 Niente di complicato:
 
-1.  **Serve Python:** Devi avere Python installato (versione 3.8 o più recente). Non servono librerie strane, usa solo quelle standard.
+1.  **Python:** Devi avere Python installato (versione 3.8 o più recente). Non servono librerie particolari, vengono usate solo quelle standard.
 2.  **Scarica il Codice:** Puoi clonare questo repository o scaricare direttamente il file `simulatore_produzione.py`.
     ```bash
     # Esempio clonazione
@@ -54,7 +54,7 @@ Niente di complicato:
     *   Il terminale ti mostrerà un riassunto veloce giorno per giorno.
     *   Alla fine, troverai un file `report_simulazione_produzione.csv` nella stessa cartella. Aprilo con Excel, Google Sheets o simili (ricorda che usa il punto e virgola ';' come separatore) per vedere tutti i dettagli.
 
-## Cosa C'è nel CSV
+## Cosa C'è nei CSV
 
 Il file `report_simulazione_produzione.csv` ha una riga per ogni "lotto" lavorato (anche se parziale) in ogni giorno. Le colonne sono:
 
